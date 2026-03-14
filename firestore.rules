@@ -1,0 +1,106 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: products
+// Fields:
+//   - name: string (required, 1-100 chars)
+//   - sku: string (required, 1-50 chars)
+//   - category: string (required)
+//   - price: number (required, positive)
+//   - stock: number (required, >= 0)
+//   - description: string (optional)
+//   - imageUrl: string (optional, valid URL)
+//   - createdAt: timestamp (required)
+//
+// Collection: sales
+// Fields:
+//   - items: list (required, map of {productId, name, qty, price, total})
+//   - subtotal: number (required)
+//   - tax: number (required)
+//   - discount: number (required)
+//   - total: number (required)
+//   - paymentMethod: string (required, enum: ['card', 'cash'])
+//   - operator: string (required)
+//   - createdAt: timestamp (required)
+//
+// Collection: users
+// Fields:
+//   - email: string (required)
+//   - role: string (required, enum: ['admin', 'staff'])
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "viniciussilsilva.VSS@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidProduct(data) {
+      return hasRequiredFields(['name', 'sku', 'price', 'stock', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.sku is string && data.sku.size() > 0 && data.sku.size() <= 50 &&
+             data.price is number && data.price >= 0 &&
+             data.stock is number && data.stock >= 0 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 1000)) &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 500)) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidSale(data) {
+      return hasRequiredFields(['items', 'total', 'paymentMethod', 'createdAt']) &&
+             data.items is list &&
+             data.total is number && data.total >= 0 &&
+             data.paymentMethod in ['card', 'cash'] &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidProduct(request.resource.data);
+      allow update: if isAdmin() && isValidProduct(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /sales/{saleId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidSale(request.resource.data);
+      allow update: if isAdmin() && isValidSale(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
